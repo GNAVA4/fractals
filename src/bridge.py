@@ -1,88 +1,96 @@
-from .core.types import FractalConfig, Point
+"""
+Мост между ядром (чистая логика) и GUI.
+Превращает FractalConfig в готовые цветные линии (один проход или итератор батчей).
+"""
+from typing import Callable, Iterator
+from .core.types import FractalConfig, Point, Line
 from .core import generators, lightning
 from .core.symmetry import apply_symmetries, reflect_x, reflect_y, radial_symmetry
-from .core.utils import apply_to_lines
-from .core.transforms import scale, rotate, translate
-from .core.coloring import colorize_lines
+from .core.transforms import scale, rotate
+from .core.coloring import colorize_lines, ColorParams
+from .core.utils import compose
 
-def generate_fractal(config: FractalConfig) -> list[tuple[object, str]]:
-    match config.fractal_type:
-        case "sierpinski": lines = generators.sierpinski_lines(config.depth)
-        case "t_fractal": lines = generators.t_fractal_lines(config.depth, config.scale)
-        case "h_fractal": lines = generators.h_fractal_lines(config.depth, config.scale)
-        case "koch": lines = generators.koch_lines(config.depth)
-        case "tree": lines = generators.tree_lines(config.depth, config.scale, config.tree_spread)
-        case "lightning": lines = lightning.lightning_lines(config.depth, config.seed, config.roughness)
-        case _: raise ValueError(f"Unknown type: {config.fractal_type}")
 
+_FULL_GENERATORS: dict[str, Callable[[FractalConfig], list[Line]]] = {
+    "sierpinski": lambda c: generators.sierpinski_lines(c.depth),
+    "t_fractal":  lambda c: generators.t_fractal_lines(c.depth, c.scale),
+    "h_fractal":  lambda c: generators.h_fractal_lines(c.depth, c.scale),
+    "koch":       lambda c: generators.koch_lines(c.depth),
+    "tree":       lambda c: generators.tree_lines(c.depth, c.scale, c.tree_spread),
+    "lightning":  lambda c: lightning.lightning_lines(c.depth, c.seed, c.roughness),
+}
+
+_BATCH_GENERATORS: dict[str, Callable[[FractalConfig], Iterator[list[Line]]]] = {
+    "sierpinski": lambda c: generators.sierpinski_batches(c.depth),
+    "t_fractal":  lambda c: generators.t_fractal_batches(c.depth, c.scale),
+    "h_fractal":  lambda c: generators.h_fractal_batches(c.depth, c.scale),
+    "koch":       lambda c: generators.koch_batches(c.depth),
+    "tree":       lambda c: generators.tree_batches(c.depth, c.scale, c.tree_spread),
+    "lightning":  lambda c: generators.lightning_batches(c.depth, c.seed, c.roughness),
+}
+
+
+def _build_transform(config: FractalConfig) -> Callable[[Line], Line]:
+    """Свёртка двух аффинных трансформаций (scale ∘ rotate) в одну функцию."""
     origin = Point(0.0, 0.0)
-    transforms = [
-        lambda l: scale(l, config.display_scale, origin),
+    return compose(
         lambda l: rotate(l, config.rotation_deg, origin),
-        lambda l: translate(l, config.translation[0], config.translation[1])
-    ]
-    transformed = apply_to_lines(lines, *transforms)
+        lambda l: scale(l, config.display_scale, origin),
+    )
 
-    sym_funcs = []
-    if config.symmetry_x: sym_funcs.append(reflect_x)
-    if config.symmetry_y: sym_funcs.append(reflect_y)
-    if config.radial_symmetry > 1: sym_funcs.append(radial_symmetry(config.radial_symmetry))
-    
-    final = apply_symmetries(transformed, *sym_funcs) if sym_funcs else transformed
+
+def _build_symmetries(config: FractalConfig):
+    syms = []
+    if config.symmetry_x:
+        syms.append(reflect_x)
+    if config.symmetry_y:
+        syms.append(reflect_y)
+    if config.radial_symmetry > 1:
+        syms.append(radial_symmetry(config.radial_symmetry))
+    return syms
+
+
+def _gen_raw(config: FractalConfig) -> list[Line]:
+    try:
+        return _FULL_GENERATORS[config.fractal_type](config)
+    except KeyError:
+        raise ValueError(f"Unknown fractal type: {config.fractal_type}")
+
+
+def generate_fractal(config: FractalConfig) -> list[tuple[Line, str]]:
+    """Полная генерация: raw -> transform -> symmetries -> colorize."""
+    raw = _gen_raw(config)
+    transform = _build_transform(config)
+    transformed = [transform(l) for l in raw]
+    final = apply_symmetries(transformed, *_build_symmetries(config))
     return colorize_lines(final, config.color_mode, config.seed)
 
 
-def _get_batch_fn(fractal_type: str):
-    match fractal_type:
-        case "sierpinski": return lambda c: generators.sierpinski_batches(c.depth)
-        case "t_fractal": return lambda c: generators.t_fractal_batches(c.depth, c.scale)
-        case "h_fractal": return lambda c: generators.h_fractal_batches(c.depth, c.scale)
-        case "koch": return lambda c: generators.koch_batches(c.depth)
-        case "tree": return lambda c: generators.tree_batches(c.depth, c.scale, c.tree_spread)
-        case "lightning": return lambda c: generators.lightning_batches(c.depth, c.seed, c.roughness)
-        case _: raise ValueError(f"Unknown type: {fractal_type}")
-
-
-# Режимы анимации для каждого типа фрактала
-# Все типы используют accumulate — каждый батч добавляет линии к предыдущим
-_ACCUMULATE = {"sierpinski", "t_fractal", "h_fractal", "koch", "tree", "lightning"}
-
-def generate_fractal_batched(config: FractalConfig):
+def generate_fractal_batched(
+    config: FractalConfig,
+) -> Iterator[tuple[list[tuple[Line, str]], int, int]]:
     """
-    Возвращает итератор батчей для анимации.
-    
-    Каждый элемент кортеж: (colored_lines, batch_idx, total_batches, mode)
-    - colored_lines: list[tuple[Line, str]] — раскрашенные линии
-    - batch_idx: int — индекс текущего батча
-    - total_batches: int — общее число батчей  
-    - mode: 'accumulate' | 'replace' — накапливать или заменять
-    
-    Для accumulate: canvas показывает все накопленные линии до current_batch_idx включительно.
-    Для replace: canvas показывает только lines из текущего батча.
+    Возвращает (colored_lines_batch, batch_idx, total_batches).
+    Симметрии и нормализация цвета считаются ОДИН раз по полному фракталу,
+    чтобы цвета не «дёргались» между кадрами.
     """
-    origin = Point(0.0, 0.0)
-    transforms = [
-        lambda l: scale(l, config.display_scale, origin),
-        lambda l: rotate(l, config.rotation_deg, origin),
-        lambda l: translate(l, config.translation[0], config.translation[1])
+    try:
+        batch_fn = _BATCH_GENERATORS[config.fractal_type]
+    except KeyError:
+        raise ValueError(f"Unknown fractal type: {config.fractal_type}")
+
+    transform = _build_transform(config)
+    syms = _build_symmetries(config)
+
+    batches_raw: list[list[Line]] = [list(b) for b in batch_fn(config)]
+    batches_transformed = [
+        apply_symmetries([transform(l) for l in batch], *syms) for batch in batches_raw
     ]
+    total_lines = sum(len(b) for b in batches_transformed)
 
-    sym_funcs = []
-    if config.symmetry_x: sym_funcs.append(reflect_x)
-    if config.symmetry_y: sym_funcs.append(reflect_y)
-    if config.radial_symmetry > 1: sym_funcs.append(radial_symmetry(config.radial_symmetry))
-
-    batch_fn = _get_batch_fn(config.fractal_type)
-    
-    # Считаем общее число батчей
-    all_batches_list = list(batch_fn(config))
-    total_batches = len(all_batches_list)
-
-    mode = 'accumulate' if config.fractal_type in _ACCUMULATE else 'replace'
-
-    for batch_idx, raw_lines in enumerate(all_batches_list):
-        transformed = apply_to_lines(raw_lines, *transforms)
-        
-        colored = colorize_lines(transformed, config.color_mode, config.seed)
-        
-        yield colored, batch_idx, total_batches, mode
+    total_batches = len(batches_transformed)
+    offset = 0
+    for idx, batch in enumerate(batches_transformed):
+        params = ColorParams(total=total_lines, index_offset=offset, seed=config.seed)
+        yield colorize_lines(batch, config.color_mode, config.seed, params), idx, total_batches
+        offset += len(batch)

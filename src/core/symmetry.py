@@ -1,52 +1,63 @@
+"""
+Симметрии как чистые функции Line -> Iterable[Line].
+
+Контракт: каждая функция симметрии возвращает ТОЛЬКО новые копии (без оригинала).
+Композиция симметрий в `apply_symmetries` сама добавляет оригинал и накапливает
+орбиту группы. Так получается корректная диэдральная симметрия: для двух
+отражений на выходе будет 4 линии (D2), для радиальной N + двух отражений — 4N (D_{2N}).
+"""
 import math
 from typing import Callable, Iterable
-from itertools import chain
 from .types import Point, Line
 
-# Базовые симметрии
-def reflect_x(line: Line) -> list[Line]:
-    """Возвращает оригинал и отражённую копию."""
-    return [line, Line(Point(line.start.x, -line.start.y), Point(line.end.x, -line.end.y))]
 
-def reflect_y(line: Line) -> list[Line]:
-    """Возвращает оригинал и отражённую копию."""
-    return [line, Line(Point(-line.start.x, line.start.y), Point(-line.end.x, line.end.y))]
+def reflect_x(line: Line) -> Iterable[Line]:
+    """Отражение по оси X (y -> -y). Возвращает одну новую линию."""
+    yield Line(
+        Point(line.start.x, -line.start.y),
+        Point(line.end.x, -line.end.y),
+    )
 
-def radial_symmetry(n: int, center: Point = Point(0, 0)) -> Callable[[Line], Iterable[Line]]:
-    """Возвращает функцию, создающую n-кратную радиальную симметрию"""
+
+def reflect_y(line: Line) -> Iterable[Line]:
+    """Отражение по оси Y (x -> -x). Возвращает одну новую линию."""
+    yield Line(
+        Point(-line.start.x, line.start.y),
+        Point(-line.end.x, line.end.y),
+    )
+
+
+def radial_symmetry(n: int, center: Point = Point(0.0, 0.0)) -> Callable[[Line], Iterable[Line]]:
+    """Возвращает функцию, дающую n-1 повёрнутых копий (без оригинала)."""
     if n < 1:
         raise ValueError("n must be >= 1")
-    angle_step = 360.0 / n
-    cos_s, sin_s = math.cos(math.radians(angle_step)), math.sin(math.radians(angle_step))
-    
+    angles = [2.0 * math.pi * k / n for k in range(1, n)]
+    rotations = [(math.cos(a), math.sin(a)) for a in angles]
+
     def apply(line: Line) -> Iterable[Line]:
-        cs, ce = line.start, line.end
-        yield Line(cs, ce)  # оригинал
-        for _ in range(n - 1):
-            # Поворот точки вокруг центра
-            def rotate(p: Point) -> Point:
-                dx, dy = p.x - center.x, p.y - center.y
-                return Point(center.x + dx*cos_s - dy*sin_s,
-                             center.y + dx*sin_s + dy*cos_s)
-            cs, ce = rotate(cs), rotate(ce)
-            yield Line(cs, ce)
+        for cos_a, sin_a in rotations:
+            sx, sy = line.start.x - center.x, line.start.y - center.y
+            ex, ey = line.end.x - center.x, line.end.y - center.y
+            yield Line(
+                Point(center.x + sx * cos_a - sy * sin_a,
+                      center.y + sx * sin_a + sy * cos_a),
+                Point(center.x + ex * cos_a - ey * sin_a,
+                      center.y + ex * sin_a + ey * cos_a),
+            )
     return apply
 
-# Композиция симметрий
-def apply_symmetries(lines: Iterable[Line], *syms: Callable[[Line], Iterable[Line]]) -> list[Line]:
-    """Применяет набор симметрий к списку линий. Чистая функция-комбинатор."""
-    if not syms:
-        return list(lines)
-    
-    # Каждая функция симметрии должна вернуть [original, ...copies]
-    # Применяем все симметрии независимо и объединяем результаты
-    result = []
-    for line in lines:
-        seen = set()
-        for sym in syms:
-            for sym_line in sym(line):
-                key = (sym_line.start.x, sym_line.start.y, sym_line.end.x, sym_line.end.y)
-                if key not in seen:
-                    seen.add(key)
-                    result.append(sym_line)
+
+def apply_symmetries(
+    lines: Iterable[Line],
+    *syms: Callable[[Line], Iterable[Line]],
+) -> list[Line]:
+    """
+    Композиция симметрий: накапливает орбиту группы.
+    После каждой симметрии результирующее множество = (текущее) + (sym(текущее)).
+    Так reflect_x ∘ reflect_y даёт 4 линии, radial(N) ∘ reflect_x — 2N линий.
+    """
+    result = list(lines)
+    for sym in syms:
+        copies = [out for ln in result for out in sym(ln)]
+        result.extend(copies)
     return result
