@@ -19,14 +19,36 @@
 
 ## Установка
 
+Требования: **Python 3.10+** (использует `match`-statements, `Literal`, `slots=True`).
+
+### Шаг 1. Клонировать репозиторий
+
 ```bash
 git clone https://github.com/GNAVA4/fractals.git
 cd fractals
-python -m venv venv
-venv\Scripts\activate   # Windows
-# source venv/bin/activate   # Linux/macOS
-pip install PyQt6
 ```
+
+### Шаг 2. Создать и активировать виртуальное окружение
+
+**Windows (PowerShell / cmd):**
+```powershell
+python -m venv venv
+venv\Scripts\activate
+```
+
+**Linux / macOS:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+### Шаг 3. Установить зависимости
+
+```bash
+pip install -r requirements.txt
+```
+
+Единственная runtime-зависимость — `PyQt6` (>= 6.5.0).
 
 ## Запуск
 
@@ -34,12 +56,35 @@ pip install PyQt6
 python app.py
 ```
 
+Откроется главное окно. По умолчанию строится Серпинский с палитрой Aurora.
+Параметры (тип, глубина, симметрии, палитра) переключаются на панели слева;
+изменения применяются автоматически с дебаунсингом 150 мс.
+
+**Горячие действия в холсте:**
+
+| Действие | Эффект |
+|---|---|
+| Колесо мыши | Зум к курсору |
+| Перетаскивание ЛКМ | Панорама |
+| Двойной клик | Сброс зума и панорамы |
+| Кнопка «▶ Запуск» | Прогрессивная анимация по уровням |
+
 ## Тесты
 
 ```bash
 python test_gui_core.py   # 12 тестов ядра, симметрий и согласованности цветов
 python test_core.py       # smoke-тест моста на нескольких конфигах
 ```
+
+Ожидаемый вывод: `12/12 tests passed`.
+
+## Возможные проблемы
+
+| Ошибка | Решение |
+|---|---|
+| `ModuleNotFoundError: No module named 'PyQt6'` | Активируйте venv и установите зависимости: `pip install -r requirements.txt` |
+| `qt.qpa.plugin: Could not load the Qt platform plugin` на Linux | Установите системный пакет: `sudo apt install libxcb-cursor0 libxkbcommon-x11-0` |
+| Окно не открывается, нет вывода | Запустите без подавления stdout: `python -u app.py` |
 
 ## Архитектура
 

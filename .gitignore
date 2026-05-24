@@ -24,5 +24,7 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Personal notes
+# Personal notes & coursework artifacts
 курсовая_работа.md
+Курсовая_работа_ФП.docx
+generate_coursework.py
